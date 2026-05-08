@@ -3,314 +3,236 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enterprise WebXR Dashboard - Quest 2</title>
+    <title>SM Dashboard - Quest 2 OS</title>
     <style>
-        :root {
-            --primary: #0084ff;
-            --glass: rgba(255, 255, 255, 0.1);
-            --text: #ffffff;
+        :root { 
+            --accent: #00d4ff; 
+            --glass: rgba(15, 15, 20, 0.98);
+            --bg: #020202;
         }
-        body {
-            margin: 0;
-            padding: 0;
-            background: #000;
-            color: var(--text);
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        body { 
+            margin: 0; 
+            background: #000; 
+            color: white; 
+            font-family: 'Segoe UI', system-ui, sans-serif; 
+            overflow: hidden; 
             display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
             height: 100vh;
-            overflow: hidden;
         }
-        #ui-fallback {
-            text-align: center;
-            background: radial-gradient(circle, #1a1a1a 0%, #000000 100%);
-            padding: 40px;
-            border-radius: 20px;
-            border: 1px solid var(--glass);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            z-index: 10;
+        
+        /* --- STARTUP INTERFACE --- */
+        #boot-screen {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
         }
-        h1 { margin-bottom: 10px; font-weight: 300; }
-        p { color: #aaa; margin-bottom: 30px; }
-        .btn {
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 15px 32px;
-            font-size: 18px;
-            border-radius: 50px;
-            cursor: pointer;
-            transition: transform 0.2s, background 0.2s;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        .logo { 
+            font-size: 4.5rem; 
+            font-weight: 900; 
+            letter-spacing: 12px; 
+            color: var(--accent); 
+            margin-bottom: 25px;
+            filter: drop-shadow(0 0 15px rgba(0, 212, 255, 0.6));
         }
-        .btn:hover { background: #0073de; transform: scale(1.05); }
-        .btn:disabled { background: #444; cursor: not-allowed; }
-        #error-log {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            color: #ff4444;
-            font-size: 12px;
-            max-width: 80%;
+        .loader-container { width: 350px; height: 3px; background: #111; border-radius: 5px; overflow: hidden; }
+        .progress-fill { width: 0%; height: 100%; background: var(--accent); box-shadow: 0 0 20px var(--accent); transition: width 0.05s ease-out; }
+        #status-text { margin-top: 15px; font-size: 0.75rem; color: #444; letter-spacing: 2px; text-transform: uppercase; }
+
+        /* --- ENTRY POINT --- */
+        #launch-zone { display: none; text-align: center; }
+        .btn-enter { 
+            padding: 22px 55px; 
+            font-size: 1.4rem; 
+            background: var(--accent); 
+            border: none; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            font-weight: 800; 
+            color: #000;
+            box-shadow: 0 8px 25px rgba(0, 212, 255, 0.3);
         }
     </style>
-    <!-- Biblioteka macierzy pobrana z CDN dla zapewnienia pełnej funkcjonalności matematycznej -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
 </head>
 <body>
 
-    <div id="ui-fallback">
-        <h1>Quest Dashboard v1.0</h1>
-        <p>Wymagane gogle VR (HTTPS lub localhost)</p>
-        <button id="xr-button" class="btn">Inicjalizacja...</button>
+    <div id="boot-screen">
+        <div class="logo">SM DASHBOARD</div>
+        <div class="loader-container"><div id="p-bar" class="progress-fill"></div></div>
+        <div id="status-text">Kernel Initializing...</div>
     </div>
 
-    <div id="error-log"></div>
+    <div id="launch-zone">
+        <h2 style="margin-bottom: 25px; font-weight: 300; color: #888;">QUEST 2 LINK ESTABLISHED</h2>
+        <button id="btn-xr" class="btn-enter">LAUNCH DASHBOARD</button>
+    </div>
 
     <script type="module">
-        const logElement = document.getElementById('error-log');
-        const xrButton = document.getElementById('xr-button');
-        
-        function log(msg) {
-            console.log(msg);
-            const div = document.createElement('div');
-            div.textContent = `> ${msg}`;
-            logElement.appendChild(div);
+        let gl, program, session, refSpace;
+        let windows = [];
+        let storeTexture, dockTexture;
+
+        const APP_DATA = [
+            { id: 'yt', name: 'YouTube', color: '#ff0000', icon: '▶' },
+            { id: 'spot', name: 'Spotify', color: '#1db954', icon: '♫' },
+            { id: 'disc', name: 'Discord', color: '#5865f2', icon: '●' }
+        ];
+
+        /* --- SEQUENCER --- */
+        async function runBoot() {
+            const bar = document.getElementById('p-bar');
+            const st = document.getElementById('status-text');
+            const steps = [
+                {p: 20, s: "Probing XR2 Chipset..."},
+                {p: 50, s: "Allocating VRAM..."},
+                {p: 80, s: "Injecting SM Shell..."},
+                {p: 100, s: "Ready."}
+            ];
+
+            for (let step of steps) {
+                bar.style.width = step.p + '%';
+                st.textContent = step.s;
+                await new Promise(r => setTimeout(r, 700));
+            }
+
+            document.getElementById('boot-screen').style.display = 'none';
+            document.getElementById('launch-zone').style.display = 'block';
         }
 
-        // --- KONFIGURACJA GRAFIKI ---
-        let gl = null;
-        let programInfo = null;
-        let buffers = null;
-        let textureUI = null;
-        let dashboardColor = [0.0, 0.5, 1.0, 0.6]; // Domyślny błękit (RGBA)
-        
-        const vertexShaderSource = `#version 300 es
-            in vec4 aVertexPosition;
-            in vec2 aTextureCoord;
-            uniform mat4 uModelViewMatrix;
-            uniform mat4 uProjectionMatrix;
-            out vec2 vTextureCoord;
-            void main() {
-                gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-                vTextureCoord = aTextureCoord;
-            }
-        `;
+        /* --- SHADERS & WEBGL --- */
+        const VS = `#version 300 es
+            in vec4 p; in vec2 t;
+            uniform mat4 prj, mv;
+            out vec2 vT;
+            void main() { gl_Position = prj * mv * p; vT = t; }`;
 
-        const fragmentShaderSource = `#version 300 es
+        const FS = `#version 300 es
             precision highp float;
-            in vec2 vTextureCoord;
-            uniform sampler2D uSampler;
-            uniform vec4 uTintColor;
-            out vec4 fragColor;
-            void main() {
-                vec4 texColor = texture(uSampler, vTextureCoord);
-                // Glassmorphism effect blend
-                fragColor = vec4(mix(uTintColor.rgb, texColor.rgb, texColor.a), uTintColor.a + texColor.a);
-            }
-        `;
+            uniform sampler2D s; uniform float a;
+            in vec2 vT; out vec4 c;
+            void main() { c = texture(s, vT); c.a *= a; }`;
 
-        // --- LOGIKA UI (Canvas 2D Textures) ---
-        const uiCanvas = document.createElement('canvas');
-        uiCanvas.width = 1024;
-        uiCanvas.height = 512;
-        const ctx = uiCanvas.getContext('2d');
+        async function launchVR() {
+            session = await navigator.xr.requestSession('immersive-vr', { requiredFeatures: ['local-floor'] });
+            const canvas = document.createElement('canvas');
+            gl = canvas.getContext('webgl2', { xrCompatible: true });
 
-        function updateUITexture() {
-            ctx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            
-            // Tło Dashboardu (Glass)
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.roundRect(50, 50, 924, 412, 40);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.lineWidth = 5;
-            ctx.stroke();
-
-            // Zegar
-            const now = new Date();
-            const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 80px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(timeStr, 512, 180);
-
-            // Opis
-            ctx.font = '30px Arial';
-            ctx.fillStyle = '#cccccc';
-            ctx.fillText('PASSTHROUGH DASHBOARD ACTIVE', 512, 240);
-
-            // Przycisk interaktywny (wizualizacja)
-            ctx.fillStyle = `rgba(${dashboardColor[0]*255}, ${dashboardColor[1]*255}, ${dashboardColor[2]*255}, 0.8)`;
-            ctx.roundRect(312, 300, 400, 80, 20);
-            ctx.fill();
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 35px Arial';
-            ctx.fillText('Zmień kolor (Trigger)', 512, 350);
-
-            if (gl && textureUI) {
-                gl.bindTexture(gl.TEXTURE_2D, textureUI);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, uiCanvas);
-            }
-        }
-
-        // --- WEBGL HELPERS ---
-        function initShaderProgram(gl, vsSource, fsSource) {
-            const loadShader = (type, source) => {
-                const shader = gl.createShader(type);
-                gl.shaderSource(shader, source);
-                gl.compileShader(shader);
-                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                    log('Shader error: ' + gl.getShaderInfoLog(shader));
-                    gl.deleteShader(shader);
-                    return null;
-                }
-                return shader;
+            const compile = (type, src) => {
+                const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+                return s;
             };
-            const vs = loadShader(gl.VERTEX_SHADER, vsSource);
-            const fs = loadShader(gl.FRAGMENT_SHADER, fsSource);
-            const prog = gl.createProgram();
-            gl.attachShader(prog, vs);
-            gl.attachShader(prog, fs);
-            gl.linkProgram(prog);
-            return prog;
-        }
+            const v = compile(gl.VERTEX_SHADER, VS);
+            const f = compile(gl.FRAGMENT_SHADER, FS);
+            program = gl.createProgram(); gl.attachShader(program, v); gl.attachShader(program, f); gl.linkProgram(program);
 
-        // --- MAIN VR LOGIC ---
-        async function startVR() {
-            try {
-                const session = await navigator.xr.requestSession('immersive-vr', {
-                    requiredFeatures: ['local-floor'],
-                    optionalFeatures: ['layers'] 
+            const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1,0,0,0, 1,1,0,1,0, -1,-1,0,0,1, 1,-1,0,1,1]), gl.STATIC_DRAW);
+            const pL = gl.getAttribLocation(program, 'p'); gl.enableVertexAttribArray(pL); gl.vertexAttribPointer(pL, 3, gl.FLOAT, false, 20, 0);
+            const tL = gl.getAttribLocation(program, 't'); gl.enableVertexAttribArray(tL); gl.vertexAttribPointer(tL, 2, gl.FLOAT, false, 20, 12);
+
+            session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+            refSpace = await session.requestReferenceSpace('local-floor');
+
+            // Sklep i Dock
+            storeTexture = genTex((ctx, w, h) => {
+                ctx.fillStyle = '#0a0a0c'; ctx.fillRect(0,0,w,h);
+                ctx.fillStyle = '#00d4ff'; ctx.font = 'bold 50px Arial'; ctx.fillText('SM STORE', 50, 80);
+                APP_DATA.forEach((app, i) => {
+                    ctx.fillStyle = '#1a1a1f'; ctx.roundRect(40, 140+i*180, w-80, 150, 20).fill();
+                    ctx.fillStyle = 'white'; ctx.font = '40px Arial'; ctx.fillText(app.name, 150, 230+i*180);
+                    ctx.fillStyle = app.color; ctx.font = '80px Arial'; ctx.fillText(app.icon, 70, 245+i*180);
+                    ctx.fillStyle = '#00d4ff'; ctx.font = '30px Arial'; ctx.fillText('INSTALUJ', w-200, 230+i*180);
                 });
-
-                // Obsługa passthrough (przezroczyste tło bufora)
-                const canvas = document.createElement('canvas');
-                gl = canvas.getContext('webgl2', { xrCompatible: true, alpha: true });
-                
-                const shaderProgram = initShaderProgram(gl, vertexShaderSource, fragmentShaderSource);
-                programInfo = {
-                    program: shaderProgram,
-                    attribLocations: {
-                        vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
-                        textureCoord: gl.getAttribLocation(shaderProgram, 'aTextureCoord'),
-                    },
-                    uniformLocations: {
-                        projectionMatrix: gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
-                        modelViewMatrix: gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
-                        uSampler: gl.getUniformLocation(shaderProgram, 'uSampler'),
-                        uTintColor: gl.getUniformLocation(shaderProgram, 'uTintColor'),
-                    },
-                };
-
-                // Definicja geometrii panelu (Quad)
-                const posBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-                const positions = [-1.0, 0.5, 0.0, 1.0, 0.5, 0.0, -1.0, -0.5, 0.0, 1.0, -0.5, 0.0];
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
-
-                const texBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, texBuffer);
-                const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
-
-                buffers = { position: posBuffer, texture: texBuffer };
-
-                // Inicjalizacja tekstury UI
-                textureUI = gl.createTexture();
-                gl.bindTexture(gl.TEXTURE_2D, textureUI);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-
-                session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: true }) });
-                const refSpace = await session.requestReferenceSpace('local-floor');
-
-                log("Sesja XR uruchomiona poprawnie.");
-
-                // Pętla interakcji
-                session.addEventListener('select', () => {
-                    // Zmiana koloru po naciśnięciu Triggera
-                    dashboardColor = [Math.random(), Math.random(), Math.random(), 0.6];
-                    log("Zmieniono kolor panelu");
-                });
-
-                function onXRFrame(t, frame) {
-                    session.requestAnimationFrame(onXRFrame);
-                    const pose = frame.getViewerPose(refSpace);
-                    if (!pose) return;
-
-                    const layer = session.renderState.baseLayer;
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-                    
-                    // Kluczowe dla Passthrough: alpha 0
-                    gl.clearColor(0, 0, 0, 0); 
-                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-                    updateUITexture();
-
-                    for (const view of pose.views) {
-                        const viewport = layer.getViewport(view);
-                        gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-                        
-                        // Macierz modelu: Panel 2 metry przed użytkownikiem, lekko uniesiony
-                        const modelViewMatrix = mat4.create();
-                        mat4.translate(modelViewMatrix, modelViewMatrix, [0, 1.2, -1.5]); 
-                        
-                        // Połączenie z macierzą widoku kamery
-                        const viewMatrix = view.transform.inverse.matrix;
-                        const finalModelView = mat4.create();
-                        mat4.multiply(finalModelView, viewMatrix, modelViewMatrix);
-
-                        // Rendering
-                        gl.useProgram(programInfo.program);
-                        
-                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-                        gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 3, gl.FLOAT, false, 0, 0);
-                        gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
-
-                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.texture);
-                        gl.vertexAttribPointer(programInfo.attribLocations.textureCoord, 2, gl.FLOAT, false, 0, 0);
-                        gl.enableVertexAttribArray(programInfo.attribLocations.textureCoord);
-
-                        gl.activeTexture(gl.TEXTURE0);
-                        gl.bindTexture(gl.TEXTURE_2D, textureUI);
-                        gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
-                        gl.uniform4fv(programInfo.uniformLocations.uTintColor, dashboardColor);
-
-                        gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, view.projectionMatrix);
-                        gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, finalModelView);
-
-                        gl.enable(gl.BLEND);
-                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-                        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-                    }
-                }
-                session.requestAnimationFrame(onXRFrame);
-
-            } catch (e) {
-                log("Błąd startu VR: " + e.message);
-            }
-        }
-
-        // Sprawdzenie dostępności urządzenia
-        if (navigator.xr) {
-            navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-                if (supported) {
-                    xrButton.textContent = "Wejdź do Dashboardu";
-                    xrButton.addEventListener('click', startVR);
-                } else {
-                    xrButton.textContent = "Brak wsparcia VR";
-                    xrButton.disabled = true;
-                }
             });
-        } else {
-            xrButton.textContent = "WebXR niedostępne";
-            xrButton.disabled = true;
-            log("Twoja przeglądarka nie obsługuje WebXR.");
+
+            session.addEventListener('select', (e) => {
+                const app = APP_DATA[windows.length % APP_DATA.length];
+                createWindow(app);
+            });
+
+            session.requestAnimationFrame(loop);
+            document.getElementById('launch-zone').style.display = 'none';
         }
+
+        function genTex(draw, w=1024, h=1024) {
+            const c = document.createElement('canvas'); c.width = w; c.height = h;
+            draw(c.getContext('2d'), w, h);
+            const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+            gl.generateMipmap(gl.TEXTURE_2D);
+            return t;
+        }
+
+        function createWindow(app) {
+            const win = {
+                app,
+                p: [(Math.random()-0.5)*2.5, 1.3 + (Math.random()-0.5), -1.8 - Math.random()],
+                r: (Math.random()-0.5) * 0.4,
+                s: [0.65, 0.45, 1],
+                t: genTex((ctx, w, h) => {
+                    ctx.fillStyle = '#050505'; ctx.beginPath(); ctx.roundRect(0,0,w,h,60); ctx.fill();
+                    ctx.strokeStyle = app.color; ctx.lineWidth = 15; ctx.stroke();
+                    ctx.fillStyle = 'white'; ctx.textAlign = 'center';
+                    ctx.font = 'bold 60px Arial'; ctx.fillText(app.name, w/2, 100);
+                    ctx.font = '250px Arial'; ctx.fillText(app.icon, w/2, h/2 + 70);
+                    ctx.font = '35px Arial'; ctx.fillStyle = '#555'; ctx.fillText('SM DASHBOARD 6DoF NODE', w/2, h-80);
+                })
+            };
+            windows.push(win);
+        }
+
+        function loop(t, frame) {
+            session.requestAnimationFrame(loop);
+            const pose = frame.getViewerPose(refSpace);
+            if (!pose) return;
+
+            const layer = session.renderState.baseLayer;
+            gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+            gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            pose.views.forEach(view => {
+                const vp = layer.getViewport(view);
+                gl.viewport(vp.x, vp.y, vp.width, vp.height);
+                gl.useProgram(program);
+                gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+                const uP = gl.getUniformLocation(program, 'prj');
+                const uM = gl.getUniformLocation(program, 'mv');
+                const uA = gl.getUniformLocation(program, 'a');
+                gl.uniformMatrix4fv(uP, false, view.projectionMatrix);
+
+                // Main Store Panel
+                let mv = mat4.create();
+                mat4.multiply(mv, view.transform.inverse.matrix, mv);
+                mat4.translate(mv, mv, [0, 1.4, -2.5]); 
+                gl.uniformMatrix4fv(uM, false, mv);
+                gl.uniform1f(uA, 1.0);
+                gl.bindTexture(gl.TEXTURE_2D, storeTexture);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                // 6DoF Windows
+                windows.forEach(w => {
+                    let wmv = mat4.create();
+                    mat4.multiply(wmv, view.transform.inverse.matrix, wmv);
+                    mat4.translate(wmv, wmv, w.p);
+                    mat4.rotateY(wmv, wmv, w.r);
+                    mat4.scale(wmv, wmv, w.s);
+                    gl.uniformMatrix4fv(uM, false, wmv);
+                    gl.bindTexture(gl.TEXTURE_2D, w.t);
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                });
+            });
+        }
+
+        document.getElementById('btn-xr').addEventListener('click', launchVR);
+        runBoot();
     </script>
 </body>
 </html>
