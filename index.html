@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise WebXR Dashboard - Quest 2</title>
+    <style>
+        :root {
+            --primary: #0084ff;
+            --glass: rgba(255, 255, 255, 0.1);
+            --text: #ffffff;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: var(--text);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #ui-fallback {
+            text-align: center;
+            background: radial-gradient(circle, #1a1a1a 0%, #000000 100%);
+            padding: 40px;
+            border-radius: 20px;
+            border: 1px solid var(--glass);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        h1 { margin-bottom: 10px; font-weight: 300; }
+        p { color: #aaa; margin-bottom: 30px; }
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            font-size: 18px;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn:hover { background: #0073de; transform: scale(1.05); }
+        .btn:disabled { background: #444; cursor: not-allowed; }
+        #error-log {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #ff4444;
+            font-size: 12px;
+            max-width: 80%;
+        }
+    </style>
+    <!-- Biblioteka macierzy pobrana z CDN dla zapewnienia pełnej funkcjonalności matematycznej -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
+</head>
+<body>
+
+    <div id="ui-fallback">
+        <h1>Quest Dashboard v1.0</h1>
+        <p>Wymagane gogle VR (HTTPS lub localhost)</p>
+        <button id="xr-button" class="btn">Inicjalizacja...</button>
+    </div>
+
+    <div id="error-log"></div>
+
+    <script type="module">
+        const logElement = document.getElementById('error-log');
+        const xrButton = document.getElementById('xr-button');
+        
+        function log(msg) {
+            console.log(msg);
+            const div = document.createElement('div');
+            div.textContent = `> ${msg}`;
+            logElement.appendChild(div);
+        }
+
+        // --- KONFIGURACJA GRAFIKI ---
+        let gl = null;
+        let programInfo = null;
+        let buffers = null;
+        let textureUI = null;
+        let dashboardColor = [0.0, 0.5, 1.0, 0.6]; // Domyślny błękit (RGBA)
+        
+        const vertexShaderSource = `#version 300 es
+            in vec4 aVertexPosition;
+            in vec2 aTextureCoord;
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            out vec2 vTextureCoord;
+            void main() {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+                vTextureCoord = aTextureCoord;
+            }
+        `;
+
+        const fragmentShaderSource = `#version 300 es
+            precision highp float;
+            in vec2 vTextureCoord;
+            uniform sampler2D uSampler;
+            uniform vec4 uTintColor;
+            out vec4 fragColor;
+            void main() {
+                vec4 texColor = texture(uSampler, vTextureCoord);
+                // Glassmorphism effect blend
+                fragColor = vec4(mix(uTintColor.rgb, texColor.rgb, texColor.a), uTintColor.a + texColor.a);
+            }
+        `;
+
+        // --- LOGIKA UI (Canvas 2D Textures) ---
+        const uiCanvas = document.createElement('canvas');
+        uiCanvas.width = 1024;
+        uiCanvas.height = 512;
+        const ctx = uiCanvas.getContext('2d');
+
+        function updateUITexture() {
+            ctx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+            
+            // Tło Dashboardu (Glass)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.roundRect(50, 50, 924, 412, 40);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 5;
+            ctx.stroke();
+
+            // Zegar
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 80px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(timeStr, 512, 180);
+
+            // Opis
+            ctx.font = '30px Arial';
+            ctx.fillStyle = '#cccccc';
+            ctx.fillText('PASSTHROUGH DASHBOARD ACTIVE', 512, 240);
+
+            // Przycisk interaktywny (wizualizacja)
+            ctx.fillStyle = `rgba(${dashboardColor[0]*255}, ${dashboardColor[1]*255}, ${dashboardColor[2]*255}, 0.8)`;
+            ctx.roundRect(312, 300, 400, 80, 20);
+            ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 35px Arial';
+            ctx.fillText('Zmień kolor (Trigger)', 512, 350);
+
+            if (gl && textureUI) {
+                gl.bindTexture(gl.TEXTURE_2D, textureUI);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, uiCanvas);
+            }
+        }
+
+        // --- WEBGL HELPERS ---
+        function initShaderProgram(gl, vsSource, fsSource) {
+            const loadShader = (type, source) => {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    log('Shader error: ' + gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            };
+            const vs = loadShader(gl.VERTEX_SHADER, vsSource);
+            const fs = loadShader(gl.FRAGMENT_SHADER, fsSource);
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs);
+            gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            return prog;
+        }
+
+        // --- MAIN VR LOGIC ---
+        async function startVR() {
+            try {
+                const session = await navigator.xr.requestSession('immersive-vr', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['layers'] 
+                });
+
+                // Obsługa passthrough (przezroczyste tło bufora)
+                const canvas = document.createElement('canvas');
+                gl = canvas.getContext('webgl2', { xrCompatible: true, alpha: true });
+                
+                const shaderProgram = initShaderProgram(gl, vertexShaderSource, fragmentShaderSource);
+                programInfo = {
+                    program: shaderProgram,
+                    attribLocations: {
+                        vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                        textureCoord: gl.getAttribLocation(shaderProgram, 'aTextureCoord'),
+                    },
+                    uniformLocations: {
+                        projectionMatrix: gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+                        modelViewMatrix: gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+                        uSampler: gl.getUniformLocation(shaderProgram, 'uSampler'),
+                        uTintColor: gl.getUniformLocation(shaderProgram, 'uTintColor'),
+                    },
+                };
+
+                // Definicja geometrii panelu (Quad)
+                const posBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+                const positions = [-1.0, 0.5, 0.0, 1.0, 0.5, 0.0, -1.0, -0.5, 0.0, 1.0, -0.5, 0.0];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+                const texBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, texBuffer);
+                const texCoords = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
+
+                buffers = { position: posBuffer, texture: texBuffer };
+
+                // Inicjalizacja tekstury UI
+                textureUI = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, textureUI);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+                session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: true }) });
+                const refSpace = await session.requestReferenceSpace('local-floor');
+
+                log("Sesja XR uruchomiona poprawnie.");
+
+                // Pętla interakcji
+                session.addEventListener('select', () => {
+                    // Zmiana koloru po naciśnięciu Triggera
+                    dashboardColor = [Math.random(), Math.random(), Math.random(), 0.6];
+                    log("Zmieniono kolor panelu");
+                });
+
+                function onXRFrame(t, frame) {
+                    session.requestAnimationFrame(onXRFrame);
+                    const pose = frame.getViewerPose(refSpace);
+                    if (!pose) return;
+
+                    const layer = session.renderState.baseLayer;
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+                    
+                    // Kluczowe dla Passthrough: alpha 0
+                    gl.clearColor(0, 0, 0, 0); 
+                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                    updateUITexture();
+
+                    for (const view of pose.views) {
+                        const viewport = layer.getViewport(view);
+                        gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+                        
+                        // Macierz modelu: Panel 2 metry przed użytkownikiem, lekko uniesiony
+                        const modelViewMatrix = mat4.create();
+                        mat4.translate(modelViewMatrix, modelViewMatrix, [0, 1.2, -1.5]); 
+                        
+                        // Połączenie z macierzą widoku kamery
+                        const viewMatrix = view.transform.inverse.matrix;
+                        const finalModelView = mat4.create();
+                        mat4.multiply(finalModelView, viewMatrix, modelViewMatrix);
+
+                        // Rendering
+                        gl.useProgram(programInfo.program);
+                        
+                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                        gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 3, gl.FLOAT, false, 0, 0);
+                        gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+                        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.texture);
+                        gl.vertexAttribPointer(programInfo.attribLocations.textureCoord, 2, gl.FLOAT, false, 0, 0);
+                        gl.enableVertexAttribArray(programInfo.attribLocations.textureCoord);
+
+                        gl.activeTexture(gl.TEXTURE0);
+                        gl.bindTexture(gl.TEXTURE_2D, textureUI);
+                        gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
+                        gl.uniform4fv(programInfo.uniformLocations.uTintColor, dashboardColor);
+
+                        gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, view.projectionMatrix);
+                        gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, finalModelView);
+
+                        gl.enable(gl.BLEND);
+                        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                    }
+                }
+                session.requestAnimationFrame(onXRFrame);
+
+            } catch (e) {
+                log("Błąd startu VR: " + e.message);
+            }
+        }
+
+        // Sprawdzenie dostępności urządzenia
+        if (navigator.xr) {
+            navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+                if (supported) {
+                    xrButton.textContent = "Wejdź do Dashboardu";
+                    xrButton.addEventListener('click', startVR);
+                } else {
+                    xrButton.textContent = "Brak wsparcia VR";
+                    xrButton.disabled = true;
+                }
+            });
+        } else {
+            xrButton.textContent = "WebXR niedostępne";
+            xrButton.disabled = true;
+            log("Twoja przeglądarka nie obsługuje WebXR.");
+        }
+    </script>
+</body>
+</html>
